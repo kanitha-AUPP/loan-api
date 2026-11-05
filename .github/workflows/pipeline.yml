@@ -1,0 +1,44 @@
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -v
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK" > /dev/null
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait until /health shows this commit
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          SHORT="${GITHUB_SHA::7}"
+          for i in $(seq 1 60); do
+            if curl -fsS "$APP_URL/health" | grep -q "$SHORT"; then
+              echo "Live with $SHORT"; exit 0
+            fi
+            sleep 10
+          done
+          echo "New version never went live"; exit 1
